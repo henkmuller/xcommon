@@ -38,30 +38,7 @@ ifneq ($(DISABLE_WALL),1)
 XCC_FLAGS += -Wall
 endif
 
-EXTRA_C_FLAGS += -fno-strict-aliasing
-
-
-# Spaces in filenames are a pain, here are some mangling/unmangling functions
-# so we can pass them around make
-CHAR3=@@@@
-CHAR2=!!!!
-CHAR1=""""
-MANGLE_DRIVES = $(foreach x,$1,$(if $(findstring :,$x),/$(CHAR3)$(subst :,$(CHAR3),$x),$x))
-UNMANGLE_DRIVES = $(subst $(CHAR3),:,$(subst /$(CHAR3),,$1))
-MANGLE=$(call MANGLE_DRIVES,$(subst $(SP),$(CHAR2),$1))
-UNMANGLE=$(call UNMANGLE_DRIVES,$(subst $(CHAR2),\ ,$1))
-REMANGLE=$(subst \ ,$(CHAR2),$1)
-UNMANGLE_NO_ESCAPE=$(call UNMANGLE_DRIVES,$(subst $(CHAR2), ,$1))
-QUOTE_AROUND = $(foreach x,$2,$(if $(filter $(1)%,$x),$(if $(wildcard $x),$x,$x$(CHAR1)),$(if $(wildcard $x),$x,$(CHAR1)$x$(CHAR1))))
-JOIN_QUOTED = $(call MANGLE_DRIVES,$(subst $(CHAR1),,$(subst $(CHAR1) $(CHAR1),$(CHAR2),$1)))
-
-
-WILDCARD = $(call JOIN_QUOTED,$(call QUOTE_AROUND,$(dir $(firstword $(call UNMANGLE_NO_ESCAPE,$1))),$(wildcard $(call UNMANGLE,$1))))
-
-# Adds ../ to a relative path
-IS_RELATIVE = $(if $(filter ./.build_%,$1),1,$(if $(filter /%,$1),,$(if $(filter :%,$(subst $(CHAR3), :,$(subst :, :,$1))),,1)))
-DOTDOT = $(if $(call IS_RELATIVE,$1),../$1,$1)
-
+include $(MODULE_XCOMMON_DIR)/build/Makefile.file_handling
 
 # Define some generic OS functions
 ifeq ($(OS),WINDOWS)
@@ -84,8 +61,6 @@ MODULE_XCOMMON_DIR = $(subst /build/../build/..,,$(patsubst %/Makefile.common1,%
 
 XCOMMON_DIR = $(MODULE_XCOMMON_DIR)/..
 
-SP0 =
-SP = $(SP0) $(SP0)
 
 FIXDEP = $(patsubst %.xc.d,%.d,$(patsubst %.c.d,%.d,$(patsubst %.cpp.d,%.d,$(patsubst %.s.d,%.d,$1))))
 
@@ -116,7 +91,7 @@ NULL=/dev/null
 CAT=cat
 TO_OS=$(1)
 AUTO_PROJ = $(call TO_OS,$(subst \ , ,$(XCOMMON_DIR))/auto_proj/bin/auto_proj)
-CHANGEDEP = sed -e 's/\(\/[^ .\\]*\) /\1\\ /g' -e "s/.*:/$(subst /,\/,$1 $(call TO_BUILD_DIR,$(call TO_OBJ, $2))):/g"  -e "s/ \.\.\// \.\//g" -e "s/$(subst /,\/,$(abspath ../..)/)/..\/..\//g"  "$(TARGET_DIR)/$(call FIXDEP,$(call UNMANGLE_NO_ESCAPE,$(notdir $1)))" > $1;$(call RM, $(TARGET_DIR)/$(call FIXDEP,$(notdir $1)))
+CHANGEDEP = sed -e 's/\(\/[^.\\]*\) /\1\\ /g' -e 's/\(\/[^.\\]*\) /\1\\ /g' -e 's/\(\/[^.\\]*\) /\1\\ /g' -e 's/\(\/[^.\\]*\) /\1\\ /g' -e 's/\(\/[^.\\]*\) /\1\\ /g' -e "s/.*:/$(subst /,\/,$1 $(call TO_BUILD_DIR,$(call TO_OBJ, $2))):/g"  -e "s/ \.\.\// \.\//g" -e "s/$(subst /,\/,$(abspath ../..)/)/..\/..\//g"  "$(TARGET_DIR)/$(call FIXDEP,$(call UNMANGLE_NO_ESCAPE,$(notdir $1)))" > $1;$(call RM, $(TARGET_DIR)/$(call FIXDEP,$(notdir $1)))
 endif
 
 .SUFFIXES:
@@ -156,6 +131,10 @@ CANDIDATE_MODULES_FOR_PATH = $(foreach x,$(call WILDCARD,$(1)/*),$(call KEEP_IF_
 
 CANDIDATE_MODULES = $(foreach x,$(XMOS_MODULE_PATH),$(call CANDIDATE_MODULES_FOR_PATH,$x))
 
+CANDIDATE_MODULES := $(foreach x,$(CANDIDATE_MODULES),$(call MANGLE,$(abspath $x)))
+CANDIDATE_MODULES := $(sort $(CANDIDATE_MODULES))
+
+
 NON_EXPLORED_DIRS ?=
 NON_EXPLORED_DIRS += %archive %.git %CVS %.svn
 
@@ -188,8 +167,11 @@ MY_SRCDIR = $(BASE_DIR)/src
 else
 MY_SRCDIR = $(BASE_DIR)
 endif
-
-UM := $(USED_MODULES)
+ifeq ($(BUILDING_LIBRARY),)
+UM := $(call HANDLE_QUOTES, $(USED_MODULES))
+else
+UM :=
+endif
 
 FIND_MODULE = $(BASE_DIR)/../$(filter $1%,$(UM))
 
@@ -219,7 +201,7 @@ $(call REMOVE_MODULE_VERSION,$1)))
 
 SRCDIR = $(if $(call IS_MODULE_DIR,$1),$(call GET_MODULE_DIR,$1),$(MY_SRCDIR)/$1)
 
-
+TARGET := $(patsubst %.xn,%,$(TARGET))
 
 # Work out the directories and file lists
 APP_NAME ?= $(subst .,_,$(notdir $(lastword $(abspath .))))
@@ -231,7 +213,6 @@ endif
 ifeq ($(strip $(APP_NAME)),)
 APP_NAME := $(subst .,_,$(notdir $(lastword $(abspath .))))
 endif
-
 
 ifeq ($(BUILDING_LIBRARY),)
 CONFIG ?= Default
@@ -271,17 +252,26 @@ endif
 
 ARCH ?= xs1b
 
+ifeq ($(BUILDING_LIBRARY),1)
+BUILD_NAME := $(CONFIG)
+WORKING_DIR := $(if $(filter Default,$(CONFIG)),.build,.build_$(CONFIG))
+INCLUDE_DIRS := *
+SOURCE_DIRS := *
+LIB_DIRS := *
+else
 BUILD_NAME ?= $(CONFIG)
-WORKING_DIR ?= $(if $(filter Default,$(CONFIG)),.build,.build_$(BUILD_NAME))
+WORKING_DIR ?= $(if $(filter Default,$(CONFIG)),.build,.build_$(CONFIG))
+INCLUDE_DIRS ?= *
+SOURCE_DIRS ?= *
+LIB_DIRS ?= *
+endif
 TARGET_DIR = ./$(WORKING_DIR)
 FAKE_INC_DIR = $(TARGET_DIR)/fake_inc
 
 BIN_DIR=$(BASE_DIR)/bin/$(if $(filter Default,$(CONFIG)),,$(CONFIG))
 LIB_DIR=$(BASE_DIR)/lib/$(ARCH)
 
-INCLUDE_DIRS ?= *
-SOURCE_DIRS ?= *
-LIB_DIRS ?= *
+
 
 
 FULL_INCLUDE_DIRS := $(foreach x, $(INCLUDE_DIRS), $(call EXPAND_DIR,$(call SRCDIR,$x)))
@@ -328,13 +318,14 @@ $$(error Multiple copies of $$(CURRENT_MODULE) found: $$(CURRENT_MODULE_DIR))
 endif
 endif
 
+
 MODULE_XCC_FLAGS :=
 MODULE_XCC_C_FLAGS :=
 MODULE_XCC_XC_FLAGS :=
 MODULE_XCC_ASM_FLAGS :=
 EXPORT_SOURCE_DIRS :=
 DEPENDENT_MODULES :=
-$$(if $$(call WILDCARD,$$(CURRENT_MODULE_DIR)/*),,$$(error Cannot find module `$$(CURRENT_MODULE)'))
+$$(if $$(call WILDCARD,$$(CURRENT_MODULE_DIR)/*),,$$(error Cannot find module `$$(call UNMANGLE_NO_ESCAPE, $$(CURRENT_MODULE))'))
 VERSION :=
 -include $$(call UNMANGLE,$$(CURRENT_MODULE_DIR))/VERSION
 REPO := $$(notdir $$(abspath $$(call UNMANGLE,$$(CURRENT_MODULE_DIR))/..))
@@ -471,6 +462,7 @@ HEADER_STATUS_FILES = $(HEADER_DEP_FILES:%.dh=%.hstat)
 QUOTED_INCLUDE_DIRS = $(foreach x, $(FULL_INCLUDE_DIRS),"$(call DOTDOT,$x)")
 INCLUDE_FLAGS = $(foreach x,$(QUOTED_INCLUDE_DIRS),-I$(call UNMANGLE_NO_ESCAPE,$x))
 
+
 WORKSPACE_RELATIVE_INCLUDE_DIRS = \
   $(foreach x,$(EXTERNAL_INCLUDE_DIRS),\
       $(foreach p,$(REPO_PATHS),$(patsubst $p/%,$(notdir $p)/%,$(filter $p%,$x))))
@@ -586,11 +578,13 @@ endef
 
 $(foreach x,$(SOURCE_FILES),$(eval $(call OBJ_RULE,$x)))
 
+
+
 ifeq ($(strip $(PREBUILD_MAKEFILES)),)
 NO_PREBUILD := 1
 endif
 
-ifeq ($(wildcard $(AUTO_PROJ)),)
+ifeq ($(call WILDCARD,$(call MANGLE,$(AUTO_PROJ))),)
 eclipse_config:
 	@echo "Warning: Cannot updating eclipse config (no auto_proj tool)"
 else
@@ -617,16 +611,16 @@ endif
 
 .PHONY: report_modules
 report_modules:
-	@echo Using modules: $(UM)
+	@echo Using modules: $(call QUOTE_IF_NEEDED,$(UM))
 
 ifeq ($(NO_PREBUILD),1)
 ifeq ($(VERBOSE),1)
-$(BIN_DIR)/%.xe :  $(OBJ_FILES) $(XN_SOURCE_FILES) $(XTA_SOURCE_FILES) $(LIB_FILES) |  $(ECLIPSE_CONFIG) $(BIN_DIR)/
-	cd $(TARGET_DIR) && $(XCC) $(TARGET_FLAGS) $(XCC_MAP_FLAGS) $(LIB_FLAGS) $(foreach x,$(OBJ_FILES),$(call TO_OS,$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XN_SOURCE_FILES),$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XTA_SOURCE_FILES),$(call DOTDOT,$x))) -o $(call TO_OS,$(call DOTDOT,$@))
+$(BIN_DIR)/%.xe :  $(OBJ_FILES) $(XN_SOURCE_FILES) $(XTA_SOURCE_FILES) $(LIB_FILES) |  $(ECLIPSE_CONFIG) $(BIN_DIR)/ report_modules
+	cd $(TARGET_DIR) && $(XCC) $(TARGET_FLAGS) $(XCC_MAP_FLAGS) $(LIB_FLAGS) $(foreach x,$(OBJ_FILES),$(call TO_OS,$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XN_SOURCE_FILES),$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XTA_SOURCE_FILES),$(call DOTDOT,$x))) -o "$(call TO_OS,$(call DOTDOT,$@))"
 else
-$(BIN_DIR)/%.xe :  $(OBJ_FILES) $(XN_SOURCE_FILES)  $(XTA_SOURCE_FILES) $(LIB_FILES) |  $(ECLIPSE_CONFIG) $(BIN_DIR)/
+$(BIN_DIR)/%.xe :  $(OBJ_FILES) $(XN_SOURCE_FILES)  $(XTA_SOURCE_FILES) $(LIB_FILES) |  $(ECLIPSE_CONFIG) $(BIN_DIR)/ report_modules
 	@echo Creating $(notdir $@)
-	@cd $(TARGET_DIR) && $(XCC) $(TARGET_FLAGS) $(XCC_MAP_FLAGS) $(LIB_FLAGS) $(foreach x,$(OBJ_FILES),$(call TO_OS,$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XN_SOURCE_FILES),$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XTA_SOURCE_FILES),$(call DOTDOT,$x))) -o $(call TO_OS,$(call DOTDOT,$@))
+	@cd $(TARGET_DIR) && $(XCC) $(TARGET_FLAGS) $(XCC_MAP_FLAGS) $(LIB_FLAGS) $(foreach x,$(OBJ_FILES),$(call TO_OS,$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XN_SOURCE_FILES),$(call DOTDOT,$x))) $(call TO_OS,$(foreach x,$(XTA_SOURCE_FILES),$(call DOTDOT,$x))) -o "$(call TO_OS,$(call DOTDOT,$@))"
 endif
 
 ifeq ($(VERBOSE),1)
@@ -640,20 +634,22 @@ endif
 
 
 else
-NO_PREBUILD := 1
-export NO_PREBUILD
+#NO_PREBUILD := 1
+#export NO_PREBUILD
 .PHONY: prebuild
 
 
 %.prebuild: prebuild
+	@echo ***Building $(notdir $(patsubst %/,%,$(dir $*)))***
 	@cd $(dir $*) && xmake --no-print-directory -f $(notdir $*) all
 
 $(BIN_DIR)/%.xe: $(foreach x, $(PREBUILD_MAKEFILES), $x.prebuild)
-	@xmake --no-print-directory $(BIN_DIR)/$*.xe
+	@echo ***Building main application***
+	@xmake NO_PREBUILD=1 --no-print-directory $(BIN_DIR)/$*.xe
 endif
 
 define DEP_RULE
-$(call TO_DEP,$(call TO_BUILD_DIR,$1)) : $(call UNMANGLE,$1) | report_modules $(TARGET_DIR)/
+$(call TO_DEP,$(call TO_BUILD_DIR,$1)) : $(call UNMANGLE,$1) | $(TARGET_DIR)/
 	@echo Creating dependencies for $(call UNMANGLE, $(notdir $1))
 	@cd $(TARGET_DIR) && $(XCC) -MMD -E $(XCC_FLAGS) $(OPTIONAL_HEADER_FLAGS) $(INCLUDE_FLAGS) "$$(call DOTDOT,$$<)" > $(NULL)
 	@-$$(call MKDIR, $$(dir $$@))
@@ -663,13 +659,19 @@ endef
 
 $(foreach x,$(SOURCE_FILES),$(eval $(call DEP_RULE,$x)))
 
-
 lib: $(LIB_DIR)/lib$(LIBRARY).a
 
 ifneq ($(MAKECMDGOALS),clean_common)
 ifneq ($(MAKECMDGOALS),clean_lib)
 ifneq ($(MAKECMDGOALS),list_includes)
+ifeq  ($(BUILDING_LIBRARY),1)
 -include $(DEP_FILES_0)
+else
+ifeq ($(NO_PREBUILD),1)
+-include $(DEP_FILES_0)
+else
+endif
+endif
 endif
 endif
 endif
@@ -712,16 +714,16 @@ all: clean_fake_includes
 ifeq ($(BUILDING_LIBRARY),1)
 MODULE_NAME ?= $(subst .,_,$(notdir $(call MANGLE,$(abspath .))))
 EXPORT_DIR = $(BASE_DIR)/export/$(MODULE_NAME)
-EXPORT_LIB_DIR = $(EXPORT_DIR)/lib/$(BUILD_NAME)
+EXPORT_LIB_DIR = $(EXPORT_DIR)/lib/$(ARCH)
 
 $(EXPORT_DIR):
 	@echo Creating export directory
 	@$(call MKDIR,$(EXPORT_DIR))	
 
 $(EXPORT_LIB_DIR)/lib%.a:
-	@$(call MKDIR,$(BASE_DIR)/export/$(MODULE_NAME)/lib/$(BUILD_NAME))	
+	@$(call MKDIR,$(BASE_DIR)/export/$(MODULE_NAME)/lib/$(ARCH))
 	@echo Copying library
-	@$(call CP,$(LIB_DIR)/lib$*.a $(BASE_DIR)/export/$(MODULE_NAME)/lib/$(BUILD_NAME)/lib$*.a)
+	@$(call CP,$(LIB_DIR)/lib$*.a $(BASE_DIR)/export/$(MODULE_NAME)/lib/$(ARCH)/lib$*.a)
 
 %.export:
 	@echo Exporting directory: $*
